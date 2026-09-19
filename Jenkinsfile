@@ -14,7 +14,7 @@ pipeline {
     KANIKO   = 'gcr.io/kaniko-project/executor:v1.23.2'
   }
 
-  options { timestamps(); disableConcurrentBuilds() }
+  options { disableConcurrentBuilds() }
 
   stages {
     stage('Checkout') {
