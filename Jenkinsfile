@@ -2,9 +2,9 @@ pipeline {
   agent any
 
   parameters {
-    string(name: 'GIT_URL',    defaultValue: 'https://github.com/wangyong-fy/k8s-fullstack-demo.git', description: '代码仓库地址')
-    string(name: 'GIT_BRANCH', defaultValue: 'main', description: '分支')
-    string(name: 'IMAGE_TAG',  defaultValue: '',     description: '镜像 tag，留空则使用 Jenkins 构建号')
+    string(name: 'REPO_URL',    defaultValue: 'git://172.19.52.97/k8s-demo-app.git', description: '代码仓库地址')
+    string(name: 'REPO_BRANCH', defaultValue: 'main', description: '分支')
+    string(name: 'IMAGE_TAG',   defaultValue: '',     description: '镜像 tag，留空则使用构建号')
   }
 
   environment {
@@ -12,6 +12,7 @@ pipeline {
     APP_NS   = 'app'
     BUILD_NS = 'jenkins'
     KANIKO   = 'gcr.io/kaniko-project/executor:v1.23.2'
+    CACHE    = 'wanyongdoker/kaniko-cache'
   }
 
   options { disableConcurrentBuilds() }
@@ -19,7 +20,7 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        git branch: "${params.GIT_BRANCH}", url: "${params.GIT_URL}"
+        git branch: "${params.REPO_BRANCH}", url: "${params.REPO_URL}"
         script { env.TAG = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : env.BUILD_NUMBER }
         sh 'echo "本次构建 -> ${REGISTRY}/k8s-demo-backend:${TAG} 与 ${REGISTRY}/k8s-demo-frontend:${TAG}"'
       }
@@ -29,8 +30,10 @@ pipeline {
       steps {
         sh '''#!/bin/bash
 set -e
-CTX="git://${GIT_URL#https://}#refs/heads/${GIT_BRANCH}"
+HOSTPATH="${REPO_URL#*://}"
+CTX="git://${HOSTPATH}#refs/heads/${REPO_BRANCH}"
 JOB="kaniko-backend-${BUILD_NUMBER}"
+echo "context = $CTX"
 kubectl -n "$BUILD_NS" delete job "$JOB" --ignore-not-found
 cat <<YAML | kubectl apply -f -
 apiVersion: batch/v1
@@ -53,6 +56,8 @@ spec:
             - "--dockerfile=Dockerfile"
             - "--destination=${REGISTRY}/k8s-demo-backend:${TAG}"
             - "--snapshot-mode=redo"
+            - "--cache=true"
+            - "--cache-repo=${CACHE}"
           volumeMounts:
             - {name: docker-config, mountPath: /kaniko/.docker}
       volumes:
@@ -61,8 +66,15 @@ spec:
             secretName: dockerhub
             items: [{key: .dockerconfigjson, path: config.json}]
 YAML
-kubectl -n "$BUILD_NS" wait --for=condition=complete "job/$JOB" --timeout=900s
-kubectl -n "$BUILD_NS" logs "job/$JOB" --tail=5
+for i in $(seq 1 240); do
+  s=$(kubectl -n "$BUILD_NS" get job "$JOB" -o jsonpath='{.status.succeeded}' 2>/dev/null)
+  f=$(kubectl -n "$BUILD_NS" get job "$JOB" -o jsonpath='{.status.failed}' 2>/dev/null)
+  [ "$s" = "1" ] && { echo "backend 镜像 OK"; break; }
+  [ -n "$f" ] && { echo "backend 构建失败"; kubectl -n "$BUILD_NS" logs "job/$JOB" --tail=60; exit 1; }
+  sleep 5
+done
+[ "$s" = "1" ] || { echo "backend 构建超时"; exit 1; }
+kubectl -n "$BUILD_NS" logs "job/$JOB" --tail=4
 '''
       }
     }
@@ -71,8 +83,10 @@ kubectl -n "$BUILD_NS" logs "job/$JOB" --tail=5
       steps {
         sh '''#!/bin/bash
 set -e
-CTX="git://${GIT_URL#https://}#refs/heads/${GIT_BRANCH}"
+HOSTPATH="${REPO_URL#*://}"
+CTX="git://${HOSTPATH}#refs/heads/${REPO_BRANCH}"
 JOB="kaniko-frontend-${BUILD_NUMBER}"
+echo "context = $CTX"
 kubectl -n "$BUILD_NS" delete job "$JOB" --ignore-not-found
 cat <<YAML | kubectl apply -f -
 apiVersion: batch/v1
@@ -95,6 +109,8 @@ spec:
             - "--dockerfile=Dockerfile"
             - "--destination=${REGISTRY}/k8s-demo-frontend:${TAG}"
             - "--snapshot-mode=redo"
+            - "--cache=true"
+            - "--cache-repo=${CACHE}"
           volumeMounts:
             - {name: docker-config, mountPath: /kaniko/.docker}
       volumes:
@@ -103,8 +119,15 @@ spec:
             secretName: dockerhub
             items: [{key: .dockerconfigjson, path: config.json}]
 YAML
-kubectl -n "$BUILD_NS" wait --for=condition=complete "job/$JOB" --timeout=900s
-kubectl -n "$BUILD_NS" logs "job/$JOB" --tail=5
+for i in $(seq 1 240); do
+  s=$(kubectl -n "$BUILD_NS" get job "$JOB" -o jsonpath='{.status.succeeded}' 2>/dev/null)
+  f=$(kubectl -n "$BUILD_NS" get job "$JOB" -o jsonpath='{.status.failed}' 2>/dev/null)
+  [ "$s" = "1" ] && { echo "frontend 镜像 OK"; break; }
+  [ -n "$f" ] && { echo "frontend 构建失败"; kubectl -n "$BUILD_NS" logs "job/$JOB" --tail=60; exit 1; }
+  sleep 5
+done
+[ "$s" = "1" ] || { echo "frontend 构建超时"; exit 1; }
+kubectl -n "$BUILD_NS" logs "job/$JOB" --tail=4
 '''
       }
     }
