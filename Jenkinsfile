@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   parameters {
-    string(name: 'REPO_URL',    defaultValue: 'git://172.19.52.97/k8s-demo-app.git', description: '代码仓库地址')
+    string(name: 'REPO_URL',    defaultValue: 'https://github.com/wangyong-fy/k8s-fullstack-demo.git', description: '代码仓库地址')
     string(name: 'REPO_BRANCH', defaultValue: 'main', description: '分支')
     string(name: 'IMAGE_TAG',   defaultValue: '',     description: '镜像 tag，留空则使用构建号')
   }
